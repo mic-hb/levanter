@@ -2,8 +2,8 @@ from typing import Callable, Tuple, TypeVar
 
 import jax
 from jax import numpy as jnp
-from jax.experimental.pjit import with_sharding_constraint
-from jax.interpreters.pxla import PartitionSpec
+from jax.lax import with_sharding_constraint
+from jax.sharding import PartitionSpec
 
 import haliax as hax
 from haliax import Axis
@@ -25,11 +25,11 @@ def accumulate_gradients(f: Callable[[M, X], Tuple[float, M]], model: M, *inputs
     def compute_and_accumulate(acc, *input):
         loss, grad = f(model, *input)
         acc_loss, acc_grad, n = acc
-        return loss + acc_loss, jax.tree_map(jnp.add, acc_grad, grad), n + 1
+        return loss + acc_loss, jax.tree_util.tree_map(jnp.add, acc_grad, grad), n + 1
 
     total_loss, total_grad, total_n = reduce(compute_and_accumulate, zero, *inputs)
 
-    return total_loss / total_n, jax.tree_map(lambda x: x / total_n, total_grad)
+    return total_loss / total_n, jax.tree_util.tree_map(lambda x: x / total_n, total_grad)
 
 
 # cf https://github.com/google-research/t5x/blob/main/t5x/trainer.py#L617
@@ -90,14 +90,14 @@ def accumulate_gradients_sharded(
 
         with jax.named_scope("accum"):
             loss += this_loss
-            grad = jax.tree_map(jnp.add, grad, this_grad)
+            grad = jax.tree_util.tree_map(jnp.add, grad, this_grad)
             grad = hax.partitioning.shard_with_axis_mapping(grad, parameter_axis_mapping)
 
         return loss, grad
 
     loss, grad = hax.fold(loop, AccumStep)((loss, grad), inputs)
 
-    return loss / num_micro_steps, jax.tree_map(lambda x: x / num_micro_steps, grad)
+    return loss / num_micro_steps, jax.tree_util.tree_map(lambda x: x / num_micro_steps, grad)
 
 
 def _reshape_for_microbatch(Batch: Axis, Microbatch: Axis, AccumStep: Axis, inputs, axis_mapping):

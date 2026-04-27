@@ -2,7 +2,7 @@ import json
 import os
 
 import torch
-from huggingface_hub import cached_download, hf_hub_url
+from huggingface_hub import hf_hub_download
 from jax.random import PRNGKey
 from transformers import GPT2Config as HfGpt2Config
 
@@ -21,12 +21,10 @@ def load_hf_model_checkpoint(location_or_id, model_file="pytorch_model.bin", map
         config = json.load(open(f"{location_or_id}/config.json"))
         checkpoint = torch.load(f"{location_or_id}/{model_file}", map_location=map_location)
     else:
-        url = hf_hub_url(location_or_id, model_file, revision=revision)
-        model_path = cached_download(url)
+        model_path = hf_hub_download(repo_id=location_or_id, filename=model_file, revision=revision)
         checkpoint = torch.load(model_path, map_location=map_location)
 
-        config_url = hf_hub_url(location_or_id, "config.json", revision=revision)
-        config_path = cached_download(config_url)
+        config_path = hf_hub_download(repo_id=location_or_id, filename="config.json", revision=revision)
         config = json.load(open(config_path))
 
     return config, checkpoint

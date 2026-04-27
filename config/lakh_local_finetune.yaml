@@ -1,0 +1,53 @@
+data:
+  train_urls:
+    - "artifacts/local-data/train.txt"
+  validation_urls:
+    - "artifacts/local-data/valid.txt"
+  cache_dir: "artifacts/local-cache/"
+  tokenizer: "passthrough"
+  plaintext: true
+  enforce_eos: false
+  num_train_shards: 4
+  num_val_shards: 2
+  train_group_size: 16
+  val_group_size: 8
+
+model:
+  hidden_dim: 64
+  num_heads: 4
+  num_layers: 2
+  seq_len: 128
+  mlp_scale: 2
+  scale_attn_by_inverse_layer_idx: true
+  embed_pdrop: 0.0
+  resid_pdrop: 0.0
+  attn_pdrop: 0.0
+  gradient_checkpointing: false
+
+trainer:
+  mp: p=f32,c=f32
+  learning_rate: 1E-4
+  weight_decay: 0.0
+  model_axis_size: 1
+  train_batch_size: 4
+  per_device_parallelism: 2
+  per_device_eval_parallelism: 2
+  num_train_steps: 1
+  steps_per_eval: 1
+  load_last_checkpoint: false
+
+  wandb:
+    mode: "disabled"
+
+  checkpointer:
+    base_path: "artifacts/local-checkpoints/"
+    save_interval: 1h
+
+  axis_resources:
+    batch: "data"
+    vocab: "model"
+    mlp: "model"
+    heads: "model"
+
+  parameter_axis_resources:
+    embed: "data"

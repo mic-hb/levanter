@@ -9,8 +9,7 @@ from chex import PRNGKey
 from jax import lax
 from jax import numpy as jnp
 from jax import random as jrandom
-from jax.experimental.global_device_array import GlobalDeviceArray
-from jax.interpreters.pxla import PartitionSpec
+from jax.sharding import NamedSharding, PartitionSpec
 from jaxtyping import PyTree
 
 from haliax.jax_utils import is_jax_array_like, shaped_rng_split
@@ -37,9 +36,11 @@ def reduce(fn: Callable[[Carry, X], Carry], init: Carry, *xs: X) -> Carry:
 def flops_estimate(fn, *args):
     """Estimates the flop count of a function using XLA/HLO fanciness. See
     https://github.com/google/flax/discussions/1854"""
-    m = jax.xla_computation(fn)(*args).as_hlo_module()
-    client = jax.lib.xla_bridge.get_backend()
-    costs = jax.lib.xla_client._xla.hlo_module_cost_analysis(client, m)
+    lowered = jax.jit(fn).lower(*args)
+    compiled = lowered.compile()
+    costs = compiled.cost_analysis()
+    if isinstance(costs, list):
+        costs = costs[0]
     return costs["flops"]
 
 
@@ -111,10 +112,9 @@ def global_key_array(key: PRNGKey, global_shape, mesh, mesh_axes):
     #     jax.sharding.MeshPspecSharding(mesh=mesh, spec=mesh_axes),
     #     data_callback=data_callback,
     # )
-    return GlobalDeviceArray.from_callback(
-        global_shape=global_shape,
-        global_mesh=mesh,
-        mesh_axes=mesh_axes,
+    return jax.make_array_from_callback(
+        shape=global_shape,
+        sharding=NamedSharding(mesh, mesh_axes),
         data_callback=data_callback,
     )
 
@@ -211,11 +211,11 @@ def leaf_key_paths(pytree, prefix: str = ""):
     elif isinstance(pytree, tuple):
         return tuple(leaf_key_paths(v, prefix=f"{prefix}.{i}" if prefix else str(i)) for i, v in enumerate(pytree))
     elif isinstance(pytree, eqx.Module):
-        values, aux = pytree.tree_flatten()
-        field_names = aux[0]
-        rec_values = [leaf_key_paths(v, prefix=f"{prefix}.{k}" if prefix else k) for k, v in zip(field_names, values)]
-
-        return pytree.tree_unflatten(aux, rec_values)
+        leaves, treedef = jax.tree_util.tree_flatten(pytree)
+        if len(leaves) == 1:
+            return jax.tree_util.tree_unflatten(treedef, [f"{prefix}"])
+        else:
+            return jax.tree_util.tree_unflatten(treedef, [f"{prefix}.{i}" for i in range(len(leaves))])
     else:
         leaves, treedef = jax.tree_util.tree_flatten(pytree)
         if len(leaves) == 1:

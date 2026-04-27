@@ -2,9 +2,7 @@ import equinox as eqx
 import jax
 import jax.numpy as jnp
 import numpy as np
-from jax.interpreters import pxla
-from jax.interpreters.pxla import PartitionSpec
-from jax.sharding import SingleDeviceSharding
+from jax.sharding import Mesh, PartitionSpec, SingleDeviceSharding
 from jaxtyping import Array
 from utils import skip_if_not_enough_devices
 
@@ -56,7 +54,7 @@ class MyModuleInit(eqx.Module):
 def test_pjit_class_init():
     with axis_mapping(resource_map):
         devices = jax.devices()
-        with pxla.Mesh(np.array(devices).reshape(-1, 2), (ResourceAxis.DATA, ResourceAxis.MODEL)):
+        with Mesh(np.array(devices).reshape(-1, 2), (ResourceAxis.DATA, ResourceAxis.MODEL)):
             mod = named_pjit(MyModuleInit)()
 
         assert mod.named.array.shape == (Dim2.size, Dim3.size)
@@ -76,7 +74,7 @@ def test_pjit_class_nested_init():
                 self.inner = MyModuleInit()
 
         devices = jax.devices()
-        with pxla.Mesh(np.array(devices).reshape(-1, 2), (ResourceAxis.DATA, ResourceAxis.MODEL)):
+        with Mesh(np.array(devices).reshape(-1, 2), (ResourceAxis.DATA, ResourceAxis.MODEL)):
             mod2 = named_pjit(Mod2)()
 
         mod = mod2.inner
@@ -97,7 +95,7 @@ def test_pjit_class_init_with_args():
                 self.array2 = hax.zeros(Dim3)
 
         devices = jax.devices()
-        with pxla.Mesh(np.array(devices).reshape(-1, 1), (ResourceAxis.DATA, ResourceAxis.MODEL)):
+        with Mesh(np.array(devices).reshape(-1, 1), (ResourceAxis.DATA, ResourceAxis.MODEL)):
             mod = named_pjit(ModWithArgs)(hax.ones((Dim1, Dim2)))
         assert isinstance(mod, ModWithArgs)
         assert mod.array.array.shape == (Dim1.size, Dim2.size)
@@ -106,8 +104,7 @@ def test_pjit_class_init_with_args():
 
 def test_infer_resource_partition_gda_bug():
     devices = jax.devices()
-    with pxla.Mesh(np.array(devices).reshape(-1, 1), (ResourceAxis.DATA, ResourceAxis.MODEL)):
-        jax.config.update("jax_parallel_functions_output_gda", True)
+    with Mesh(np.array(devices).reshape(-1, 1), (ResourceAxis.DATA, ResourceAxis.MODEL)):
         try:
 
             def foo():
@@ -126,4 +123,4 @@ def test_infer_resource_partition_gda_bug():
             assert r.axes == (Dim1, Dim2, Dim3)
 
         finally:
-            jax.config.update("jax_parallel_functions_output_gda", False)
+            pass

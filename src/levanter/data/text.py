@@ -494,10 +494,10 @@ class CachedLMDatasetConfig(LMDatasetConfig):
 
 class PassthroughTokenizer(PreTrainedTokenizer):
     def __init__(self, vocab_size, **kwargs):
-        super().__init__(**kwargs)
         self._vocab_size = vocab_size
         self._eos = self._vocab_size - 1
         self._eos_token = str(self._eos)
+        super().__init__(**kwargs)
 
     @property
     def vocab_size(self) -> int:
@@ -513,6 +513,9 @@ class PassthroughTokenizer(PreTrainedTokenizer):
 
     def save_vocabulary(self, save_directory: str, filename_prefix: Optional[str] = None) -> Tuple[str, ...]:
         return ()
+
+    def get_vocab(self):
+        return {str(i): i for i in range(self._vocab_size)}
 
     def _tokenize(self, text, **kwargs):
         tokens = numpy.fromstring(text, dtype=int, sep=" ")

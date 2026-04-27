@@ -9,7 +9,7 @@ from typing import Any, Callable, Optional, Sequence, Union
 
 import fsspec
 import jax
-from equinox.serialisation import _is_index, default_deserialise_filter_spec, default_serialise_filter_spec
+from equinox._serialisation import default_deserialise_filter_spec, default_serialise_filter_spec
 from fsspec import AbstractFileSystem
 from jaxtyping import PyTree
 
@@ -18,6 +18,10 @@ from levanter.tensorstore_serialization import tree_deserialize_leaves_tensorsto
 
 
 logger = logging.getLogger(__name__)
+
+
+def _is_index(_x: Any) -> bool:
+    return False
 
 PathLike = Union[str, pathlib.Path]
 
@@ -319,9 +323,9 @@ def tree_serialise_leaves(
                 spec(f, y)
                 return y
 
-            jax.tree_map(__serialise, x, is_leaf=is_leaf)
+            jax.tree_util.tree_map(__serialise, x, is_leaf=is_leaf)
 
-        jax.tree_map(_serialise, filter_spec, pytree)
+        jax.tree_util.tree_map(_serialise, filter_spec, pytree)
 
 
 def tree_deserialise_leaves(

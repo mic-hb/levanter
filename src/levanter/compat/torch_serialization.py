@@ -1,3 +1,5 @@
+import copy
+import dataclasses
 from typing import Any, Dict, Optional, Tuple, TypeVar, cast
 
 import equinox as eqx
@@ -132,17 +134,24 @@ def default_eqx_module_from_torch_dict(mod: Mod, torch_dict: StateDict, prefix: 
     if hasattr(mod, "_torch_key_map"):
         key_map = mod._torch_key_map()
 
-    old_values, mod_state = mod.tree_flatten()
-    dyn_keys = mod_state[0]
-
-    new_values = []
-    for k, old in zip(dyn_keys, old_values):
+    updates = {}
+    for field in dataclasses.fields(mod):
+        if field.metadata.get("static", False):
+            continue
+        k = field.name
+        old = getattr(mod, k)
         if key_map is not None and k in key_map:
             k = key_map[k]
         # TODO: might want to add a flag that allows missing keys?
-        new_values.append(jax_tree_from_torch_state_dict(old, torch_dict, apply_prefix(prefix, k)))
+        updates[field.name] = jax_tree_from_torch_state_dict(old, torch_dict, apply_prefix(prefix, k))
 
-    return mod.tree_unflatten(mod_state, new_values)
+    # Many Equinox modules define custom __init__ signatures that don't accept
+    # all dataclass fields, so dataclasses.replace() can fail. Copy and update
+    # fields directly to preserve module structure without invoking __init__.
+    mod_copy = copy.copy(mod)
+    for key, value in updates.items():
+        object.__setattr__(mod_copy, key, value)
+    return mod_copy
 
 
 def default_eqx_module_to_torch_dict(mod: Mod, prefix: Optional[str] = None) -> StateDict:
@@ -159,9 +168,11 @@ def default_update_torch_dict_with_eqx_module(
     if hasattr(mod, "_torch_key_map"):
         key_map = mod._torch_key_map()
 
-    values, mod_state = mod.tree_flatten()
-    dyn_keys = mod_state[0]
-    for k, v in zip(dyn_keys, values):
+    for field in dataclasses.fields(mod):
+        if field.metadata.get("static", False):
+            continue
+        k = field.name
+        v = getattr(mod, field.name)
         if key_map is not None and k in key_map:
             k = key_map[k]
 

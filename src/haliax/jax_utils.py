@@ -5,13 +5,13 @@ import equinox as eqx
 import jax
 import numpy as np
 from chex import PRNGKey
-from equinox.module import Static
+from equinox._module import Static
 from jax import numpy as jnp
 from jax import random as jrandom
 from jaxtyping import PyTree
 
 
-def shaped_rng_split(key, split_shape: Union[int, Sequence[int]] = 2) -> jrandom.KeyArray:
+def shaped_rng_split(key, split_shape: Union[int, Sequence[int]] = 2) -> jax.Array:
     if isinstance(split_shape, int):
         num_splits = split_shape
         split_shape = (num_splits,) + key.shape

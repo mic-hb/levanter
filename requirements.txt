@@ -1,15 +1,24 @@
-equinox~=0.9.0
-transformers>=4.22.0
-optax
+jax==0.4.30
+jaxlib==0.4.30
+equinox==0.11.9
+optax==0.2.4
+chex==0.1.88
+numpy>=1.24,<2
+jaxtyping>=0.2.25
+transformers>=4.41
+huggingface_hub>=0.23
+safetensors>=0.4
+torch>=2.0
+jmp @ git+https://github.com/deepmind/jmp@main
 wandb
 pyrallis
 pyarrow
 zstandard
-datasets~=2.6.0
-gcsfs==2022.10.0
+datasets>=2.14
 braceexpand
-jmp @ git+https://github.com/deepmind/jmp#7b3ae548154625a56a6dbdb03bc07d4f599c37b2
-fsspec==2022.10.0 # pin this to make gcsfs happy
-tensorstore
+fsspec>=2023.1
+tensorstore>=0.1.45
 pytimeparse
 humanfriendly
+gitpython
+tqdm

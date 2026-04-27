@@ -5,9 +5,8 @@ from typing import Dict, Iterator, List, Optional, Sequence, Tuple, TypeVar, Uni
 import jax
 import jax.numpy as jnp
 import numpy as np
-from jax.experimental.global_device_array import GlobalDeviceArray
 from jax.experimental.multihost_utils import process_allgather
-from jax.interpreters.pxla import Mesh, PartitionSpec
+from jax.sharding import Mesh, NamedSharding, PartitionSpec
 from jaxtyping import Array, PyTree
 
 import haliax as hax
@@ -101,7 +100,9 @@ class GlobalBatchDataset(Dataset[PyTree[jax.Array]]):
                 total_examples_accessed_this_step += num_examples_for_this_device
                 individual_datums = list(itertools.islice(one_item_generator, num_examples_for_this_device))
 
-                local_batch = jax.tree_map(self._stack_leaves_unchecked, *individual_datums, is_leaf=is_named_array)
+                local_batch = jax.tree_util.tree_map(
+                    self._stack_leaves_unchecked, *individual_datums, is_leaf=is_named_array
+                )
                 batch_leaves, _batch_structure = jax.tree_util.tree_flatten(local_batch)
 
                 if batch_tree_structure is None:
@@ -123,15 +124,9 @@ class GlobalBatchDataset(Dataset[PyTree[jax.Array]]):
 
             # TODO: with a bit more fanciness, we can avoid needing the item_shape
             gda_leaves = [
-                # jax.make_array_from_callback(
-                #     to_raw_shape(shape),
-                #     jax.sharding.NamedSharding(self.mesh, self._pspec_for(shape)),
-                #     lambda indices: get_local_data_for_leaf(indices, leaf_index),
-                # )
-                GlobalDeviceArray.from_callback(
+                jax.make_array_from_callback(
                     to_raw_shape(shape),
-                    self.mesh,
-                    self._pspec_for(shape),
+                    NamedSharding(self.mesh, self._pspec_for(shape)),
                     lambda indices: get_local_data_for_leaf(indices, leaf_index),
                 )
                 for leaf_index, shape in enumerate(shape_leaves)
@@ -169,7 +164,7 @@ class GlobalBatchDataset(Dataset[PyTree[jax.Array]]):
             else:
                 return ShapeSpec((self.Batch.size,) + shape, shape_spec.dtype)
 
-        return jax.tree_map(_batchify_shape_spec, self.local_dataset.item_shape)
+        return jax.tree_util.tree_map(_batchify_shape_spec, self.local_dataset.item_shape)
 
     def __len__(self):
         return self._global_min_length

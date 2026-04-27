@@ -1,12 +1,17 @@
 import logging
 from dataclasses import dataclass
+from typing import Optional
 
 import equinox as eqx
+import jax
 import jax.numpy as jnp
 import jax.random as jrandom
 import jmp
 import pyrallis
-from jax.interpreters.pxla import PartitionSpec
+try:
+    from jax.sharding import PartitionSpec
+except ImportError:
+    from jax.interpreters.pxla import PartitionSpec
 from transformers import GPT2Tokenizer
 
 import haliax as hax
@@ -22,6 +27,7 @@ from levanter.grad_accum import accumulate_gradients_sharded
 from levanter.jax_utils import global_key_array, parameter_count
 from levanter.logging import capture_time, log_time_to_wandb
 from levanter.modeling_utils import cross_entropy_loss_and_log_normalizers
+from levanter.compat.hf_checkpoints import load_hf_gpt2_checkpoint
 from levanter.models.gpt2 import Gpt2Config, Gpt2LMHeadModel
 from levanter.trainer_hooks import StepInfo, TrainerHooks
 from py_utils import non_caching_cycle
@@ -38,6 +44,8 @@ class TrainGpt2Config:
     data: CachedLMDatasetConfig = CachedLMDatasetConfig()
     trainer: TrainerConfig = TrainerConfig()
     model: Gpt2Config = Gpt2Config()
+    initialize_from_hf_checkpoint: Optional[str] = None
+    skip_final_eval: bool = False
 
     log_z_regularization: float = 0.0
     fcm_prob: float = 0.0  # forgetful context masking prob. recommended 0.15
@@ -108,6 +116,31 @@ def main(config: TrainGpt2Config):
             return mp.cast_to_param(model)
 
         model = init_model()
+        if config.initialize_from_hf_checkpoint:
+            logger.info(f"Initializing model weights from HF checkpoint: {config.initialize_from_hf_checkpoint}")
+            with jax.default_device(jax.devices("cpu")[0]):
+                hf_model = load_hf_gpt2_checkpoint(config.initialize_from_hf_checkpoint, map_location="cpu")
+            # Keep checkpoint conversion on CPU for stability, then move to the training device
+            # before pjit sharding to avoid CPU-vs-GPU sharding mismatches.
+            train_device = mesh.devices.flat[0]
+
+            def _move_to_train_device(x):
+                if isinstance(x, hax.NamedArray):
+                    return hax.NamedArray(jax.device_put(x.array, train_device), x.axes)
+                if hasattr(x, "shape") and hasattr(x, "dtype"):
+                    return jax.device_put(x, train_device)
+                return x
+
+            hf_model = jax.tree_util.tree_map(
+                _move_to_train_device,
+                hf_model,
+            )
+
+            @named_pjit(axis_resources=parameter_axis_mapping)
+            def cast_and_shard_model(m):
+                return mp.cast_to_param(m)
+
+            model = cast_and_shard_model(hf_model)
 
         wandb.summary["parameter_count"] = parameter_count(model)
 
@@ -278,7 +311,8 @@ def main(config: TrainGpt2Config):
             step_duration=step_time(),
         )
 
-        evaluate_step(last_step)
+        if not config.skip_final_eval:
+            evaluate_step(last_step)
         checkpointer.on_step(last_step, force=True)
 
 

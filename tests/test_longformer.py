@@ -1,4 +1,4 @@
-import jax.config
+import jax
 import jax.numpy as jnp
 import numpy as np
 
@@ -84,8 +84,8 @@ def test_longformer_alibi_bias_pos_invariance():
     v = np.tile(cycle, L // W).reshape((L, H, D))
     v = hax.named(v, (SeqLen, Head, Hidden))
 
-    q = hax.ones((SeqLen, Head, Hidden), dtype=jnp.bfloat16) * 0.001
-    k = hax.ones((SeqLen, Head, Hidden), dtype=jnp.bfloat16) * 0.001
+    q = hax.ones((SeqLen, Head, Hidden), dtype=jnp.float32) * 0.001
+    k = hax.ones((SeqLen, Head, Hidden), dtype=jnp.float32) * 0.001
 
     # bias gets geometrically larger as we go further in the sequence
     # this is especially true if there are a lot of heads
@@ -93,7 +93,7 @@ def test_longformer_alibi_bias_pos_invariance():
     # NB: this test doesn't work if you use bfloat16 for biases
     bias = hax.nn.attention.alibi_attention_bias(big_head, SeqLen, dtype=jnp.float32).slice(big_head, Head, 0)
 
-    attn = causal_sliding_window_attention(SeqLen, Window, Hidden, q, k, v, bias=bias, attention_dtype=jnp.bfloat16)
+    attn = causal_sliding_window_attention(SeqLen, Window, Hidden, q, k, v, bias=bias, attention_dtype=jnp.float32)
     attn = attn.rearrange((SeqLen, Head, Hidden)).array.reshape(L)
 
     # final value for each cycle should be the same

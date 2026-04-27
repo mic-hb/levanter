@@ -6,8 +6,9 @@ from typing import Any, Callable, Tuple, TypeVar, Union
 import equinox as eqx
 import jax
 import jax.lax as lax
-from equinox.custom_types import BoolAxisSpec
 from jaxtyping import PyTree
+BoolAxisSpec = PyTree
+
 
 from .core import NamedArray
 from .jax_utils import broadcast_prefix, combine, is_jax_array_like

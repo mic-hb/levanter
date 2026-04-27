@@ -15,8 +15,8 @@ import numpy as np
 import optax
 import pyrallis
 from git import InvalidGitRepositoryError, NoSuchPathError, Repo
-from jax._src.clusters import SlurmCluster, TpuCluster
-from jax.experimental.maps import Mesh
+from jax._src.clusters import GceTpuCluster, GkeTpuCluster, SlurmCluster
+from jax.sharding import Mesh
 from pyrallis import field
 
 import levanter.logging
@@ -206,7 +206,7 @@ class DistributedConfig:
 
         # jax will automatically detect slurm or tpu, so we check those too. This is a bit fragile
         # since it depends on the jax internals, but it's the best we can do
-        if SlurmCluster.is_env_present() or TpuCluster.is_env_present():
+        if SlurmCluster.is_env_present() or GceTpuCluster.is_env_present() or GkeTpuCluster.is_env_present():
             return True
 
     def initialize(self):
@@ -270,7 +270,6 @@ class TrainerConfig:
     lr_schedule: str = "cosine"  # constant, cosine, linear
 
     use_hardware_rng: bool = False  # whether to use less-reproducible but faster rng
-    use_jax_array: bool = True  # whether or not to use the new jax.Array for pjitted models.
 
     distributed: DistributedConfig = DistributedConfig()
 
@@ -326,7 +325,6 @@ class TrainerConfig:
     def _initialize_jax_config(self):
         """Initialize global jax config with settings we like, based on config"""
         jax_utils.set_hardware_rng_ops(self.use_hardware_rng)
-        jax.config.update("jax_array", self.use_jax_array)
 
     def _initialize_logging(self):
         self.log_dir.mkdir(parents=True, exist_ok=True)

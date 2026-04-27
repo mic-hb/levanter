@@ -131,7 +131,11 @@ def pbar_logger(iterable=None, desc="train", **tqdm_mkwargs):
 
 def defragment():
     """Use if you're getting OOM errors after training has been running a while"""
-    jax.lib.xla_bridge.get_backend().defragment()
+    backend = jax.lib.xla_bridge.get_backend()
+    try:
+        backend.defragment()
+    except Exception as e:
+        warnings.warn(f"Defragment is unavailable on backend {backend.platform}: {e}")
 
 
 def log_memory_usage(sample_interval: float = 1.0, log_individual_devices: bool = False):

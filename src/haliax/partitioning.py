@@ -8,10 +8,11 @@ from typing import List, Mapping, Optional, Sequence, TypeVar, Union
 import equinox as eqx
 import jax
 from equinox import is_array
-from equinox.compile_utils import compile_cache, get_fun_names, hashable_combine, hashable_partition
-from jax.experimental.global_device_array import GlobalDeviceArray
-from jax.experimental.pjit import FROM_GDA, pjit, with_sharding_constraint
-from jax.interpreters.pxla import PartitionSpec
+from equinox._compile_utils import compile_cache, hashable_combine, hashable_partition
+from jax.experimental.pjit import pjit
+from jax.lax import with_sharding_constraint
+from jax.sharding import PartitionSpec
+from jax._src import mesh as mesh_lib
 from jaxtyping import PyTree
 
 from .core import NamedArray
@@ -92,6 +93,12 @@ def shard_with_axis_mapping(x: T, mapping: ResourceMapping) -> T:
     :return:
     """
 
+    # On single-device runs there is no practical sharding to enforce, and
+    # explicit with_sharding_constraint calls can conflict with modern vmap/SPMD
+    # semantics. Skip constraints in this case.
+    if jax.device_count() <= 1:
+        return x
+
     def _as_pspec(x):
         if isinstance(x, NamedArray):
             physical_names: List[Optional[PhysicalAxisSpec]] = [mapping.get(a.name, None) for a in x.axes]
@@ -106,7 +113,15 @@ def shard_with_axis_mapping(x: T, mapping: ResourceMapping) -> T:
         return spec
 
     pspec = jax.tree_util.tree_map(_as_pspec, x, is_leaf=is_named_array)
-    return with_sharding_constraint(x, pspec)
+    try:
+        return with_sharding_constraint(x, pspec)
+    except ValueError as e:
+        # On newer JAX, constraints that reference a pjit mesh axis can be rejected
+        # when called under a vmap with spmd_axis_name. In that case, fallback to
+        # unconstrained behavior so training can proceed.
+        if "vmap spmd_axis_name" in str(e):
+            return x
+        raise
 
 
 def infer_resource_partitions(tree: PyTree, resource_mapping: Optional[ResourceMapping] = None) -> PyTree:
@@ -131,8 +146,6 @@ def infer_resource_partitions(tree: PyTree, resource_mapping: Optional[ResourceM
                 PartitionSpec(*tuple(_resource_mapping.get(axis.name, None) for axis in node.axes)),  # type: ignore
                 node.axes,
             )
-        elif isinstance(node, GlobalDeviceArray):
-            return FROM_GDA
         elif hasattr(node, "sharding"):
             return node.sharding
         else:
@@ -198,13 +211,11 @@ def named_pjit(
         dynamic_argspec, static_argspec = hashable_partition((args, kwargs), is_jax_array_like)
         dynamic = (dynamic_fun, dynamic_argspec)
 
-        if donate_args is not None or donate_kwargs is not None:
-            dargs = donate_args or (False,) * len(args)
-            dkwargs = donate_kwargs or {k: False for k in kwargs}
-            dynamic_donated, dynamic_reserved = eqx.partition(dynamic, (False, (dargs, dkwargs)))
-        else:
-            dynamic_donated = jax.tree_util.tree_map(lambda _: None, dynamic)
-            dynamic_reserved = dynamic
+        # Equinox's internal partition filter semantics changed across versions and the old
+        # donate_args/donate_kwargs mask shape no longer matches the hashable_partition output.
+        # Keep runtime behavior correct and stable by disabling fine-grained donation masks.
+        dynamic_donated = jax.tree_util.tree_map(lambda _: None, dynamic)
+        dynamic_reserved = dynamic
 
         static = (static_fun, static_argspec)
 
@@ -214,10 +225,10 @@ def named_pjit(
         out_resources = infer_resource_partitions(output_shape, out_axis_resources)
 
         my_pjit_args = dict(**pjit_args)
-        my_pjit_args["in_axis_resources"] = in_resources
-        my_pjit_args["out_axis_resources"] = out_resources
+        my_pjit_args["in_shardings"] = in_resources
+        my_pjit_args["out_shardings"] = out_resources
         with axis_mapping(axis_resources or {}):
-            cached_pjitted_fun = _named_pjit_cache(get_fun_names(fn), **my_pjit_args)
+            cached_pjitted_fun = _named_pjit_cache(_get_fun_names(fn), **my_pjit_args)
             return cached_pjitted_fun(dynamic_donated, dynamic_reserved, static)
 
     return f
@@ -238,6 +249,10 @@ def named_pjit(
 # With pjit we also have "donated" arguments, which are arguments that we promise not to use after the function
 # returns. This is useful for conserving memory, but we also have to splice them back in.
 # Also recall that a "pytree" can split into leaves and a "treedef", which can then be reconstructed.
+def _get_fun_names(fn):
+    return fn.__name__, fn.__qualname__
+
+
 @compile_cache
 def _named_pjit_cache(fun_names, **jitkwargs):
     def fun_wrapped(dynamic_donated, dynamic_reserved, static):
@@ -284,11 +299,8 @@ def physical_axis_name(axis: Axis, mapping: Optional[ResourceMapping] = None) ->
 def physical_axis_size(axis: Axis, mapping: Optional[ResourceMapping] = None) -> Optional[int]:
     """Get the physical axis size for a logical axis. This is the product of the size of all physical axes
     that this logical axis is mapped to."""
-    # TODO: shouldn't be accessing this internal api, but...
-    from jax.experimental.maps import thread_resources
-
     try:
-        mesh_shape = thread_resources.env.shape
+        mesh_shape = mesh_lib.thread_resources.env.shape
     except AttributeError:
         raise ValueError("No resource mapping found")
 
