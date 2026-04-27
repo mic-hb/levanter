@@ -143,3 +143,5 @@ ledger.json
 
 /checkpoints
 *.jaxpr
+
+artifacts
