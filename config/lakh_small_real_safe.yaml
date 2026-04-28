@@ -2,9 +2,9 @@ initialize_from_hf_checkpoint: "artifacts/hf-converted/music-small-800k-bin"
 
 data:
   train_urls:
-    - "/ABSOLUTE/PATH/TO/preprocessed/train.txt"
+    - "../../anticipation/data/lmd_10pct/train.txt"
   validation_urls:
-    - "/ABSOLUTE/PATH/TO/preprocessed/valid.txt"
+    - "../../anticipation/data/lmd_10pct/valid.txt"
   cache_dir: "artifacts/real-cache/"
   tokenizer: "passthrough"
   plaintext: true
