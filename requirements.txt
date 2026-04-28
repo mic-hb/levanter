@@ -12,7 +12,7 @@ torch>=2.0
 jmp @ git+https://github.com/deepmind/jmp@main
 wandb
 pyrallis
-pyarrow
+pyarrow>=14,<21
 zstandard
 datasets>=2.14
 braceexpand
