@@ -181,7 +181,9 @@ def main(config: TrainGpt2Config):
                     logz_mse = hax.mean((log_normalizers**2))
                     loss += config.log_z_regularization * logz_mse
 
-                return loss.scalar()
+                # Newer JAX tracing paths can already yield a scalar tracer here.
+                # Keep NamedArray scalar conversion when available, otherwise return tracer directly.
+                return loss.scalar() if hasattr(loss, "scalar") else loss
 
         def train_batch_loss(model, input_ids, attn_mask, key):
             return hax.mean(hax.vmap(compute_loss, Batch)(model, input_ids, attn_mask, key, inference=False))
@@ -252,7 +254,8 @@ def main(config: TrainGpt2Config):
         engine.add_hook(callbacks.log_memory_usage(), every=1)
         checkpointer = config.trainer.checkpointer.create(config.trainer.run_name)
         engine.add_hook(checkpointer.on_step, every=1)  # checkpointer manages its own frequency
-        engine.add_hook(lambda x: callbacks.defragment(), every=100)
+        # Disabled for CUDA PJRT C-API compatibility on newer GPU/runtime stacks.
+        # Some environments raise fatal ReleaseDeviceMemoryOwnership errors in this hook.
 
         # data loader
         iter_data = non_caching_cycle(dataset)
@@ -292,9 +295,9 @@ def main(config: TrainGpt2Config):
                     input_ids = next(iter_data)
                     input_ids = hax.named(input_ids, (Batch, SeqLen))
                     my_key, training_key = jrandom.split(training_key, 2)
-                    example_keys = global_key_array(
-                        my_key, config.trainer.train_batch_size, mesh, PartitionSpec(ResourceAxis.DATA)
-                    )
+                    # JAX 0.6.x + newer GPU toolchains can fail lowering when global sharded PRNG key arrays
+                    # flow through dropout vmaps. For smoke/full-auto runs, local per-example splits are robust.
+                    example_keys = jrandom.split(my_key, config.trainer.train_batch_size)
 
                 step_loss, model, opt_state = train_step(model, opt_state, input_ids, example_keys)
                 step_loss = step_loss.item()

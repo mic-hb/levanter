@@ -2,6 +2,7 @@ import copy
 import logging
 import os
 import re
+import shutil
 import subprocess
 import tempfile
 import threading
@@ -166,6 +167,14 @@ def log_memory_usage(sample_interval: float = 1.0, log_individual_devices: bool 
             jax.profiler.save_device_memory_profile(f"{tempfile_name}.new")
             posix.rename(f"{tempfile_name}.new", tempfile_name)
             time.sleep(sample_interval)
+
+    has_go_pprof = shutil.which("go") is not None
+
+    if not has_go_pprof:
+        def log_memory_usage(step: StepInfo):
+            return
+
+        return log_memory_usage
 
     thread = threading.Thread(target=inner, daemon=True)
     thread.start()
