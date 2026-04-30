@@ -41,6 +41,8 @@ class BaselineEvalConfig:
     report_path: str = "artifacts/eval-reports/music-large-800k-baseline.json"
     checkpoint_id: Optional[str] = None
     local_converted_checkpoint: Optional[str] = "artifacts/hf-converted/music-large-800k-bin"
+    max_batches_per_split: Optional[int] = None
+    log_every_n_batches: int = 100
 
     data: CachedLMDatasetConfig = field(default_factory=CachedLMDatasetConfig)
     trainer: TrainerConfig = field(default_factory=TrainerConfig)
@@ -101,7 +103,15 @@ def _build_eval_dataset(
     )
 
 
-def _evaluate_split(model: Gpt2LMHeadModel, dataset, trainer: TrainerConfig) -> Dict[str, float]:
+def _evaluate_split(
+    model: Gpt2LMHeadModel,
+    dataset,
+    trainer: TrainerConfig,
+    *,
+    split_name: str,
+    max_batches_per_split: Optional[int],
+    log_every_n_batches: int,
+) -> Dict[str, float]:
     eval_batch = Axis("batch", trainer.eval_batch_size)
     seq_len = model.config.SeqLen
     key_seq_len = model.config.KeySeqLen
@@ -126,10 +136,20 @@ def _evaluate_split(model: Gpt2LMHeadModel, dataset, trainer: TrainerConfig) -> 
 
     total_loss = 0.0
     num_batches = 0
+    started_at = time.time()
     for batch in dataset:
+        if max_batches_per_split is not None and num_batches >= max_batches_per_split:
+            break
         scalar_loss = eval_loss_pjit(batch)
         total_loss += float(scalar_loss.item() if hasattr(scalar_loss, "item") else scalar_loss.scalar())
         num_batches += 1
+        if log_every_n_batches > 0 and num_batches % log_every_n_batches == 0:
+            elapsed = time.time() - started_at
+            print(
+                f"[{split_name}] batches={num_batches} "
+                f"running_loss={total_loss / num_batches:.6f} "
+                f"elapsed_s={elapsed:.1f}"
+            )
 
     if num_batches == 0:
         raise ValueError("Evaluation dataset has zero batches.")
@@ -139,6 +159,7 @@ def _evaluate_split(model: Gpt2LMHeadModel, dataset, trainer: TrainerConfig) -> 
         "eval_loss": avg_loss,
         "perplexity": float(math.exp(avg_loss)),
         "num_batches": float(num_batches),
+        "elapsed_seconds": float(time.time() - started_at),
     }
 
 
@@ -205,8 +226,22 @@ def main(config: BaselineEvalConfig):
         )
 
         started_at_unix = int(time.time())
-        valid_metrics = _evaluate_split(model, valid_dataset, config.trainer)
-        test_metrics = _evaluate_split(model, test_dataset, config.trainer)
+        valid_metrics = _evaluate_split(
+            model,
+            valid_dataset,
+            config.trainer,
+            split_name="valid",
+            max_batches_per_split=config.max_batches_per_split,
+            log_every_n_batches=config.log_every_n_batches,
+        )
+        test_metrics = _evaluate_split(
+            model,
+            test_dataset,
+            config.trainer,
+            split_name="test",
+            max_batches_per_split=config.max_batches_per_split,
+            log_every_n_batches=config.log_every_n_batches,
+        )
 
     resolved_config = asdict(config)
     resolved_config_checksum = _sha256_text(_canonical_json(resolved_config))
@@ -228,6 +263,10 @@ def main(config: BaselineEvalConfig):
         "config": {
             "resolved": resolved_config,
             "checksum_sha256": resolved_config_checksum,
+        },
+        "notes": {
+            "max_batches_per_split": config.max_batches_per_split,
+            "log_every_n_batches": config.log_every_n_batches,
         },
     }
 
