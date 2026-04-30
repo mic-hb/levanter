@@ -10,6 +10,7 @@ from typing import Dict, Optional
 import jax
 import jmp
 import pyrallis
+from huggingface_hub.errors import EntryNotFoundError
 from transformers import GPT2Config as HfGpt2Config
 
 import haliax as hax
@@ -39,6 +40,7 @@ class BaselineEvalConfig:
     test_url: str = "../../anticipation/data/lmd_full/test.txt"
     report_path: str = "artifacts/eval-reports/music-large-800k-baseline.json"
     checkpoint_id: Optional[str] = None
+    local_converted_checkpoint: Optional[str] = "artifacts/hf-converted/music-large-800k-bin"
 
     data: CachedLMDatasetConfig = field(default_factory=CachedLMDatasetConfig)
     trainer: TrainerConfig = field(default_factory=TrainerConfig)
@@ -61,6 +63,21 @@ def _load_hf_architecture(hf_checkpoint: str, hf_revision: Optional[str]) -> Dic
         "n_positions": cfg.n_positions,
         "vocab_size": cfg.vocab_size,
     }
+
+
+def _resolve_checkpoint_source(config: BaselineEvalConfig) -> str:
+    """
+    Resolve which checkpoint source to use for weight loading.
+
+    Priority:
+    1) Explicit local converted checkpoint path, when it exists and has pytorch_model.bin.
+    2) hf_checkpoint (repo id or local path passed via --hf_checkpoint).
+    """
+    if config.local_converted_checkpoint:
+        local_path = Path(config.local_converted_checkpoint).expanduser()
+        if (local_path / "pytorch_model.bin").exists():
+            return str(local_path)
+    return config.hf_checkpoint
 
 
 def _build_eval_dataset(
@@ -139,13 +156,24 @@ def main(config: BaselineEvalConfig):
                 f"Refusing to run because this script is for music-large-800k baseline only."
             )
 
+    checkpoint_source = _resolve_checkpoint_source(config)
+
     with config.trainer.device_mesh:
         with jax.default_device(jax.devices("cpu")[0]):
-            model = load_hf_gpt2_checkpoint(
-                config.hf_checkpoint,
-                map_location="cpu",
-                revision=config.hf_revision,
-            )
+            try:
+                model = load_hf_gpt2_checkpoint(
+                    checkpoint_source,
+                    map_location="cpu",
+                    revision=config.hf_revision if checkpoint_source == config.hf_checkpoint else None,
+                )
+            except EntryNotFoundError as exc:
+                raise ValueError(
+                    "Could not find pytorch_model.bin for the provided Hugging Face repo. "
+                    "This is expected for safetensors-only repos like stanford-crfm/music-large-800k. "
+                    "Use your converted local checkpoint directory instead, e.g. "
+                    "--hf_checkpoint artifacts/hf-converted/music-large-800k-bin "
+                    "or keep --local_converted_checkpoint pointing to that directory."
+                ) from exc
 
         valid_dataset = _build_eval_dataset(
             base_data_config=config.data,
@@ -174,8 +202,9 @@ def main(config: BaselineEvalConfig):
         "created_at_unix": started_at_unix,
         "checkpoint": {
             "id": config.checkpoint_id or config.hf_checkpoint,
-            "path_or_repo": config.hf_checkpoint,
-            "revision": config.hf_revision,
+            "path_or_repo": checkpoint_source,
+            "revision": config.hf_revision if checkpoint_source == config.hf_checkpoint else None,
+            "source_kind": "local_converted_dir" if checkpoint_source != config.hf_checkpoint else "hf_repo_or_local_path",
         },
         "architecture": arch,
         "metrics": {
