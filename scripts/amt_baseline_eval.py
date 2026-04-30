@@ -144,6 +144,20 @@ def _evaluate_split(model: Gpt2LMHeadModel, dataset, trainer: TrainerConfig) -> 
 
 @pyrallis.wrap()
 def main(config: BaselineEvalConfig):
+    # Levanter's named_pjit requires a non-empty logical->physical axis mapping.
+    # Some CLI runs omit this, so provide the same safe defaults used by training configs.
+    if not config.trainer.axis_resources:
+        config.trainer.axis_resources = {
+            "batch": "data",
+            "vocab": "model",
+            "mlp": "model",
+            "heads": "model",
+        }
+    if not config.trainer.parameter_axis_resources:
+        config.trainer.parameter_axis_resources = {
+            "embed": "data",
+        }
+
     if config.trainer.per_device_eval_parallelism == -1:
         config.trainer.per_device_eval_parallelism = max(1, config.trainer.per_device_parallelism)
     config.trainer.initialize(config)
