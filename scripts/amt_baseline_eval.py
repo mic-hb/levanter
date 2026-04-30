@@ -56,6 +56,33 @@ def _sha256_text(text: str) -> str:
     return hashlib.sha256(text.encode("utf-8")).hexdigest()
 
 
+def _to_json_safe(value):
+    """
+    Recursively coerce objects into JSON-serializable primitives.
+
+    This avoids crashes from objects like jmp policy metadata or dtype meta objects
+    that can appear inside nested dataclass configs.
+    """
+    if value is None or isinstance(value, (str, int, float, bool)):
+        return value
+    if isinstance(value, Path):
+        return str(value)
+    if isinstance(value, dict):
+        return {str(k): _to_json_safe(v) for k, v in value.items()}
+    if isinstance(value, (list, tuple, set)):
+        return [_to_json_safe(v) for v in value]
+
+    # Try common scalar-style conversions first.
+    if hasattr(value, "item"):
+        try:
+            return value.item()
+        except Exception:
+            pass
+
+    # Fallback to string representation for unknown config/meta objects.
+    return str(value)
+
+
 def _load_hf_architecture(hf_checkpoint: str, hf_revision: Optional[str]) -> Dict[str, int]:
     cfg = HfGpt2Config.from_pretrained(hf_checkpoint, revision=hf_revision)
     return {
@@ -243,7 +270,7 @@ def main(config: BaselineEvalConfig):
             log_every_n_batches=config.log_every_n_batches,
         )
 
-    resolved_config = asdict(config)
+    resolved_config = _to_json_safe(asdict(config))
     resolved_config_checksum = _sha256_text(_canonical_json(resolved_config))
 
     report = {
