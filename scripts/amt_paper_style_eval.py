@@ -73,16 +73,23 @@ def parse_args():
         choices=["cuda", "cpu"],
         help="Device for evaluation.",
     )
+    parser.add_argument(
+        "--log_every_lines",
+        type=int,
+        default=500,
+        help="Print progress every N evaluated lines (default: 500).",
+    )
     return parser.parse_args()
 
 
-def evaluate_checkpoint(model, dataset_path: str, subsample: int, max_lines: int):
+def evaluate_checkpoint(model, dataset_path: str, subsample: int, max_lines: int, log_every_lines: int):
     if subsample <= 0:
         raise ValueError("--subsample must be >= 1")
 
     ce_values = []
     num_lines_total = 0
     num_lines_used = 0
+    num_token_predictions = 0
     start_time = time.time()
 
     with open(dataset_path, "r", encoding="utf-8") as data:
@@ -103,8 +110,18 @@ def evaluate_checkpoint(model, dataset_path: str, subsample: int, max_lines: int
                 logits = model(input_ids).logits[0]  # [seq, vocab]
                 ce = F.cross_entropy(logits[:-1], input_ids[0, 1:], reduction="none")
                 ce_values.append(ce.detach().cpu())
+                num_token_predictions += int(ce.shape[0])
 
             num_lines_used += 1
+            if log_every_lines > 0 and num_lines_used % log_every_lines == 0:
+                elapsed = time.time() - start_time
+                line_rate = num_lines_used / max(elapsed, 1e-9)
+                tok_rate = num_token_predictions / max(elapsed, 1e-9)
+                print(
+                    f"[eval] lines={num_lines_used} tokens={num_token_predictions} "
+                    f"elapsed_s={elapsed:.1f} lines_per_s={line_rate:.2f} tok_per_s={tok_rate:.2f}",
+                    flush=True,
+                )
 
     if len(ce_values) == 0:
         raise ValueError("No examples were evaluated. Check dataset path, subsample, and max_lines.")
@@ -116,6 +133,7 @@ def evaluate_checkpoint(model, dataset_path: str, subsample: int, max_lines: int
         "ce_all": ce_all,
         "num_lines_total": num_lines_total,
         "num_lines_used": num_lines_used,
+        "num_token_predictions": num_token_predictions,
         "elapsed_seconds": elapsed,
     }
 
@@ -194,6 +212,7 @@ def main():
         dataset_path=args.dataset_path,
         subsample=args.subsample,
         max_lines=args.max_lines,
+        log_every_lines=args.log_every_lines,
     )
     metrics = compute_metrics(
         ce_all=eval_result["ce_all"],
@@ -212,7 +231,7 @@ def main():
         "dataset_stats": {
             "num_lines_total_seen": eval_result["num_lines_total"],
             "num_lines_used": eval_result["num_lines_used"],
-            "num_token_predictions": int(len(eval_result["ce_all"])),
+            "num_token_predictions": int(eval_result["num_token_predictions"]),
         },
         "runtime": {
             "elapsed_seconds": eval_result["elapsed_seconds"],
